@@ -11,16 +11,20 @@
   /* phone touch controls (only shown on touch screens) */
   body { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
   .tc, #menuBtn, #rotate { display: none; }
-  body.touch .tc { display: block; }
-  body.touch #menuBtn { display: flex; }
-  .tc b, #menuBtn { position: fixed; display: flex; align-items: center; justify-content: center; font: bold 12px monospace;
+  body.touch.play .tc { display: block; }
+  body.touch.back #menuBtn { display: flex; }
+  .tc b { display: flex; }
+  .tc b, #menuBtn { position: fixed; align-items: center; justify-content: center; font: bold 12px monospace;
     color: #fff; background: rgba(20,12,30,0.45); border: 2px solid rgba(255,255,255,0.55); border-radius: 50%;
     width: 15vmin; height: 15vmin; touch-action: none; }
   .tc b.on, #menuBtn.on { background: rgba(255,210,63,0.6); }
-  .up { left: calc(env(safe-area-inset-left) + 17vmin); bottom: 33vmin; }
-  .lf { left: calc(env(safe-area-inset-left) + 2vmin); bottom: 17vmin; }
-  .rt { left: calc(env(safe-area-inset-left) + 32vmin); bottom: 17vmin; }
-  .dn { left: calc(env(safe-area-inset-left) + 17vmin); bottom: 2vmin; }
+  .bk { right: calc(env(safe-area-inset-right) + 34vmin); bottom: 6vmin; }
+  #stick { display: none; position: fixed; left: calc(env(safe-area-inset-left) + 3vmin); bottom: 3vmin; width: 32vmin; height: 32vmin;
+    border-radius: 50%; background: rgba(20,12,30,0.35); border: 3px solid rgba(255,255,255,0.5); touch-action: none; z-index: 2; }
+  body.touch.play #stick { display: block; }
+  #stick::before { content: ''; position: absolute; inset: 22%; border-radius: 50%; border: 2px dashed rgba(255,255,255,0.25); }
+  #stick i { position: absolute; left: 50%; top: 50%; width: 16vmin; height: 16vmin; margin: -8vmin 0 0 -8vmin; border-radius: 50%;
+    background: rgba(255,255,255,0.6); border: 3px solid #fff; pointer-events: none; }
   .pu { right: calc(env(safe-area-inset-right) + 18vmin); bottom: 4vmin; }
   .ki { right: calc(env(safe-area-inset-right) + 2vmin); bottom: 18vmin; }
   .sp { right: calc(env(safe-area-inset-right) + 18vmin); bottom: 30vmin; font-size: 10px !important; }
@@ -41,10 +45,11 @@
 <body>
 <canvas id="c" width="384" height="216"></canvas>
 <div class="tc">
-  <b class="up" data-k="KeyW">JUMP</b><b class="lf" data-k="KeyA">&#9664;</b><b class="rt" data-k="KeyD">&#9654;</b><b class="dn" data-k="KeyS">BLOCK</b>
+  <b class="bk" data-k="KeyS">BLOCK</b>
   <b class="pu" data-k="KeyF">PUNCH</b><b class="ki" data-k="KeyG">KICK</b><b class="sp" data-k="KeyH">SPECIAL</b>
 </div>
 <b id="menuBtn" data-k="Escape">MENU</b>
+<div id="stick"><i></i></div>
 <div id="codeBox"><input id="codeIn" maxlength="4" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" placeholder="CODE" enterkeyhint="go"><button id="codeGo">JOIN</button></div>
 <div id="rotate">Turn your phone sideways<br>to play</div>
 <script>
@@ -124,6 +129,32 @@ function updateCodeBox() {
   codeBox.classList.toggle('show', show);
   if (!show && document.activeElement === codeIn) codeIn.blur();
 }
+// thumb wheel: push left/right to walk, up to jump, down to block
+const stick = document.getElementById('stick'), knob = stick.firstElementChild;
+let stickId = null, stickUp = false;
+function stickKey(code, on) { if (on) { if (!keys[code]) vPress(code); } else vRelease(code); }
+function stickMove(e) {
+  const rc = stick.getBoundingClientRect(), r = rc.width / 2;
+  let dx = e.clientX - (rc.left + r), dy = e.clientY - (rc.top + r);
+  const len = Math.hypot(dx, dy), max = r * 0.62;
+  if (len > max) { dx *= max / len; dy *= max / len; }
+  knob.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+  stickKey('KeyA', dx < -r * 0.18); stickKey('KeyD', dx > r * 0.18);
+  stickKey('KeyS', dy > r * 0.28);
+  const up = dy < -r * 0.28;
+  if (up && !stickUp) vPress('KeyW');
+  if (!up) vRelease('KeyW');
+  stickUp = up;
+}
+function stickEnd(e) {
+  if (e.pointerId !== stickId) return;
+  stickId = null; stickUp = false; knob.style.transform = '';
+  ['KeyA', 'KeyD', 'KeyS', 'KeyW'].forEach(vRelease);
+}
+stick.addEventListener('pointerdown', e => { e.preventDefault(); stickId = e.pointerId; try { stick.setPointerCapture(e.pointerId); } catch (_) {} stickMove(e); });
+stick.addEventListener('pointermove', e => { if (e.pointerId === stickId) stickMove(e); });
+stick.addEventListener('pointerup', stickEnd); stick.addEventListener('pointercancel', stickEnd); stick.addEventListener('lostpointercapture', stickEnd);
+stick.addEventListener('contextmenu', e => e.preventDefault());
 document.querySelectorAll('[data-k]').forEach(b => {
   const code = b.dataset.k;
   b.addEventListener('pointerdown', e => { e.preventDefault(); try { b.setPointerCapture(e.pointerId); } catch (_) {} b.classList.add('on'); vPress(code); });
@@ -142,7 +173,10 @@ cv.addEventListener('pointerdown', e => {
   const rc = cv.getBoundingClientRect();
   const x = (e.clientX - rc.left) / rc.width * W, y = (e.clientY - rc.top) / rc.height * H;
   if (mode === 'title') {
-    if (x > 122 && x < 262 && y > 62 && y < 112) { menu = Math.min(2, Math.floor((y - 62) / 16)); typed.push({ code: 'Enter', key: '' }); pressed.Enter = true; }
+    const idx = Math.floor((y - 53) / 13);
+    if (x > 122 && x < 262 && idx >= 0 && idx < (sub ? 4 : 5)) { menu = idx; typed.push({ code: 'Enter', key: '' }); pressed.Enter = true; }
+  } else if (mode === 'help') {
+    pressed.Enter = true;
   } else if (mode === 'join' && net !== 'guest') {
     codeIn.focus();
   } else if (mode === 'matchEnd' || mode === 'left') {
@@ -199,10 +233,40 @@ let menu = 0, round = 1, modeT = 0, timer = 60, timerAcc = 0, banner = '', shake
 let net = null;       // null = same keyboard, 'host' or 'guest'
 let peer = null, conn = null, roomCode = '', joinCode = '', netStatus = '';
 let inputs = [{ held:{}, pr:{} }, { held:{}, pr:{} }];
+let vsCPU = false, cpuLevel = 1, sub = null;   // sub: null or 'level' (the easy/medium/hard menu)
+const CPU = [
+  { react: 28, block: 0.2,  aggr: 0.3,  combo: 0.1,  spec: 0.1,  jump: 0.03 },   // easy
+  { react: 15, block: 0.5,  aggr: 0.5,  combo: 0.35, spec: 0.3,  jump: 0.07 },   // medium
+  { react: 5,  block: 0.85, aggr: 0.9,  combo: 0.8,  spec: 0.7,  jump: 0.1 }     // hard
+];
+let cpuT = 0, cpuHold = {};
+function cpuInput() {
+  const me = P[1], foe = P[0], L = CPU[cpuLevel], held = {}, pr = {};
+  if (mode !== 'fight' || me.state === 'ko' || me.state === 'down' || me.state === 'win') { cpuT = 0; return { held, pr }; }
+  const dx = foe.x - me.x, dist = Math.abs(dx), dir = dx > 0 ? 1 : -1, walk = d => d > 0 ? { right: true } : { left: true };
+  // keep the combo going after a hit lands
+  if (me.state === 'attack' && me.hitDone && Math.random() < 0.25 * L.combo) pr[Math.random() < 0.5 ? 'punch' : 'kick'] = true;
+  if (cpuT > 0) { cpuT--; Object.assign(held, cpuHold); return { held, pr }; }
+  cpuHold = {}; cpuT = L.react;
+  const r = Math.random();
+  const threat = foe.state === 'attack' && dist < 64, shot = projs.some(p => p.o === 0 && Math.abs(p.x - me.x) < 80);
+  if ((threat || shot) && me.y >= GROUND && r < L.block) {
+    if (shot && Math.random() < 0.4) pr.up = true; else { cpuHold = { down: true }; cpuT = 16; Object.assign(held, cpuHold); }
+  } else if (dist > 46) {                                       // too far to hit: walk in (or throw a special / jump in)
+    if (me.cool <= 0 && dist > 80 && dist < 240 && Math.random() < L.spec) { pr.special = true; cpuT = 20; }
+    else { cpuHold = walk(dx); Object.assign(held, cpuHold); if (dist > 70 && Math.random() < L.jump) pr.up = true; }
+  } else if (Math.random() < L.aggr) {
+    const k = Math.random();
+    if (k < 0.4) pr.punch = true; else if (k < 0.7) pr.kick = true;
+    else { held.down = true; cpuHold = { down: true }; cpuT = 8; pr[k < 0.85 ? 'punch' : 'kick'] = true; }
+  } else { cpuHold = walk(-dx); Object.assign(held, cpuHold); }
+  return { held, pr };
+}
 let netHeld = 0, netPr = 0, outbox = [], lastSent = -1;
 // button presses are remembered for a few frames, so fast combos are not lost during hit pauses
 let bufs = [{}, {}];
 let snapAge = 99;   // guest: frames since the last update from the host
+let pa = null, lastPredSwing = -99;   // guest: our own punch/kick shown at once, before the host confirms it
 
 function resetPositions() {
   for (const f of P) { const w = f.wins; Object.assign(f, makeFighter(f.i)); f.wins = w; }
@@ -217,7 +281,7 @@ function fx(e) {
   playFx(e);
 }
 function playFx(e) {
-  if (SFX[e.k]) SFX[e.k]();
+  if (!(e.k === 'swing' && net === 'guest' && frame - lastPredSwing < 24) && SFX[e.k]) SFX[e.k]();
   if (e.k === 'hit' || e.k === 'heavy') { addSparks(e.x, e.y, '#ffe066', 12, 3.5); addSparks(e.x, e.y, '#ffffff', 5, 2); }
   if (e.k === 'block') addSparks(e.x, e.y, '#9fd3ff', 7, 2.5);
   if (e.k === 'clash') addSparks(e.x, e.y, '#ffffff', 16, 4);
@@ -431,7 +495,7 @@ const BROKERS = window.CC_BROKERS || [
   'wss://test.mosquitto.org:8081/mqtt'
 ];
 const TOPIC = (code, dir) => 'cedarclash/v2/' + code + '/' + dir;   // 'h' = to host, 'g' = to guest
-let clients = [], netGen = 0, lastHeard = 0, snapSeq = 0, lastSeq = 0;
+let helloTimers = [], clients = [], netGen = 0, lastHeard = 0, snapSeq = 0, lastSeq = 0;
 
 function mqttOk() { return typeof window.mqtt === 'object' && typeof window.mqtt.connect === 'function'; }
 
@@ -460,6 +524,7 @@ function makeConn(c, topic) {
 
 function leaveOnline() {
   netGen++;
+  helloTimers.forEach(clearInterval); helloTimers = [];
   if (conn) conn.send({ t: 'bye' });
   const bound = conn && conn.client;
   for (const c of clients.slice()) endClient(c, c === bound);
@@ -467,7 +532,7 @@ function leaveOnline() {
 }
 
 function hostGame() {
-  leaveOnline();
+  leaveOnline(); vsCPU = false;
   mode = 'host'; modeT = 0;
   if (!mqttOk()) { netStatus = 'NO INTERNET - CHECK CONNECTION'; return; }
   roomCode = randomCode(); peer = true; netStatus = 'CONNECTING...';
@@ -495,45 +560,36 @@ function hostGame() {
 }
 
 function joinGame(code) {
-  leaveOnline();
+  leaveOnline(); vsCPU = false;
   mode = 'join';
   if (!mqttOk()) { netStatus = 'NO INTERNET - CHECK CONNECTION'; return; }
   peer = true; netStatus = 'CONNECTING...';
   const gen = netGen;
-  let i = 0;
-  function tryNext() {
-    if (gen !== netGen) return;
-    if (i >= BROKERS.length) { netStatus = 'ROOM NOT FOUND - CHECK THE CODE'; peer = null; return; }
-    const url = BROKERS[i++];
-    let done = false, hello = null, timer = null, cl = null;
-    const giveUp = () => {
-      if (done || gen !== netGen) return;
-      done = true; clearInterval(hello); clearTimeout(timer);
-      if (cl) endClient(cl);
-      tryNext();
-    };
-    cl = openClient(url, gen,
+  let up = 0, down = 0;
+  const fail = () => {
+    if (gen !== netGen || conn) return;
+    netStatus = up ? 'ROOM NOT FOUND - CHECK THE CODE' : 'CANNOT REACH THE SERVER - CHECK INTERNET';
+    peer = null; for (const c of clients.slice()) endClient(c);
+  };
+  for (const url of BROKERS) {
+    openClient(url, gen,
       c => {
-        netStatus = 'LOOKING FOR ROOM ' + code + '...';
-        clearTimeout(timer); timer = setTimeout(giveUp, 6000);
+        up++; if (!conn) netStatus = 'LOOKING FOR ROOM ' + code + '...';
         c.subscribe(TOPIC(code, 'g'), () => {
-          const say = () => { try { c.publish(TOPIC(code, 'h'), JSON.stringify({ t: 'hello' })); } catch (e) {} };
-          say(); hello = setInterval(say, 1000);
+          const say = () => { if (!conn) try { c.publish(TOPIC(code, 'h'), JSON.stringify({ t: 'hello' })); } catch (e) {} };
+          say(); helloTimers.push(setInterval(say, 800));
         });
       },
       (c, d) => {
-        if (d.t === 'welcome' && !conn) {
-          done = true; clearInterval(hello); clearTimeout(timer);
+        if (d.t === 'welcome' && !conn) {                       // the first server that answers is the fastest one
           conn = makeConn(c, TOPIC(code, 'h'));
-          net = 'guest'; netStatus = 'CONNECTED! STARTING...'; lastHeard = performance.now(); lastSeq = 0;
+          net = 'guest'; netStatus = 'CONNECTED! STARTING...'; lastHeard = performance.now(); lastSeq = 0; snapAge = 99; pa = null;
           for (const x of clients.slice()) if (x !== c) endClient(x);
         } else if (conn && conn.client === c) onData(d);
       },
-      c => { if (conn && conn.client === c) friendLeft(); else giveUp(); });
-    if (!cl) { tryNext(); return; }
-    timer = setTimeout(giveUp, 9000);
+      c => { if (conn && conn.client === c) friendLeft(); else if (!conn && ++down >= BROKERS.length) fail(); });
   }
-  tryNext();
+  setTimeout(fail, 12000);
 }
 
 function friendLeft() {
@@ -551,8 +607,22 @@ function applySnapshot(s) {
   snapAge = 0; freeze = s.fz | 0;
   stage = (s.st | 0) % STAGES.length; mode = s.m; modeT = s.mt; round = s.r; timer = s.tm; banner = s.b; shake = Math.max(shake, s.sh); P.winner = s.w;
   s.P.forEach((a, i) => {
-    const f = P[i];
+    const f = P[i], old = { x: f.x, y: f.y, vx: f.vx, vy: f.vy, state: f.state, atk: f.atk, t: f.t, face: f.face, walkT: f.walkT };
     [f.x, f.y, f.face, f.hp, f.wins, f.state, f.t, f.atk, f.stun, f.walkT, f.cool, f.combo, f.comboT, f.flash, f.vx, f.vy] = a;
+    if (i !== 1 || net !== 'guest' || mode !== 'fight') return;
+    const calm = ['idle', 'walk', 'jump', 'block'];
+    if (pa) {
+      if (f.state === 'attack') pa = null;                       // the host saw it: use its version
+      else if (frame - pa.f <= 14) Object.assign(f, old);        // not confirmed yet: keep showing our own
+      else pa = null;
+    } else if (calm.includes(f.state) && calm.includes(old.state)) {
+      const ex = f.x - old.x, ey = f.y - old.y, moving = old.state === 'walk';
+      if (Math.abs(ey) <= 24 && Math.abs(ex) <= (moving ? 40 : 0.5)) {         // close enough: keep what we show
+        f.x = old.x; f.y = old.y; f.vx = old.vx; f.vy = old.vy; f.state = old.state; f.face = old.face; f.walkT = old.walkT;
+      } else if (Math.abs(ey) <= 24 && old.state !== 'jump') {                  // standing still or far off: slide to the host's spot
+        f.x = old.x + ex * (moving ? 0.3 : 0.35); f.y = old.y; f.vx = old.vx; f.vy = old.vy; f.state = old.state; f.face = old.face; f.walkT = old.walkT;
+      }
+    }
   });
   projs = s.pj.map(a => ({ x: a[0], y: a[1], vx: a[2], o: a[3], t: a[4] }));
   for (const e of s.fx) playFx(e);
@@ -565,6 +635,29 @@ function onData(d) {
   if (net === 'guest' && d.t === 's' && d.q > lastSeq) { lastSeq = d.q; applySnapshot(d); }
 }
 
+// Guest: show our own walking, jumping and hits right away instead of waiting for the round trip
+function predictOwn(loc) {
+  const me = P[1], foe = P[0], g = onGround(me), held = loc.held, pr = loc.pr;
+  const gap = me.x - foe.x;                                              // fighters cannot walk through each other
+  if (Math.abs(gap) < 20 && Math.abs(me.y - foe.y) < 50) me.x = Math.max(14, Math.min(W - 14, foe.x + (gap >= 0 ? 20 : -20)));
+  if (pa) {
+    const a = ATTACKS[pa.atk];
+    if (me.state === 'attack' && me.t >= a.startup + a.active + a.recovery && pa.atk !== 'air') { me.state = 'idle'; me.atk = null; pa = null; }
+    return;
+  }
+  if (!['idle', 'walk', 'jump', 'block'].includes(me.state)) return;
+  const start = type => { me.state = 'attack'; me.atk = type; me.t = 0; pa = { atk: type, f: frame }; lastPredSwing = frame; SFX.swing(); };
+  if (pr.punch) { start(g && held.down ? 'upper' : 'punch'); return; }
+  if (pr.kick) { start(!g ? 'air' : held.down ? 'sweep' : 'kick'); return; }
+  if (!g) { me.state = 'jump'; return; }
+  me.face = foe.x > me.x ? 1 : -1;
+  if (held.down) { me.state = 'block'; me.vx = 0; return; }
+  const dir = (held.right ? 1 : 0) - (held.left ? 1 : 0);
+  me.vx = dir * (dir === me.face ? 1.8 : 1.3);
+  me.state = dir ? 'walk' : 'idle';
+  if (pr.up) { me.vy = -6.2; me.vx = dir * 2.1; me.state = 'jump'; }
+}
+
 // ================= Main update =================
 function update() {
   frame++;
@@ -574,15 +667,23 @@ function update() {
   if (mode === 'title') {
     modeT++;
     let choose = false;
+    const n = sub ? 4 : 5;
     for (const e of keysTyped) {
-      if (e.code === 'ArrowUp' || e.code === 'KeyW') { menu = (menu + 2) % 3; SFX.select(); }
-      if (e.code === 'ArrowDown' || e.code === 'KeyS') { menu = (menu + 1) % 3; SFX.select(); }
+      if (e.code === 'ArrowUp' || e.code === 'KeyW') { menu = (menu + n - 1) % n; SFX.select(); }
+      if (e.code === 'ArrowDown' || e.code === 'KeyS') { menu = (menu + 1) % n; SFX.select(); }
+      if (e.code === 'Escape' && sub) { sub = null; menu = 0; }
       if (e.code === 'Enter' || e.code === 'Space') { choose = true; break; }
     }
     if (choose) {
       SFX.select();
-      if (menu === 0) { net = null; startMatch(); }
-      else if (menu === 1) hostGame();
+      if (sub) {
+        if (menu < 3) { cpuLevel = menu; vsCPU = true; net = null; sub = null; menu = 0; startMatch(); }
+        else { sub = null; menu = 0; }
+      }
+      else if (menu === 0) { sub = 'level'; menu = 1; }
+      else if (menu === 1) { vsCPU = false; net = null; startMatch(); }
+      else if (menu === 2) hostGame();
+      else if (menu === 4) { mode = 'help'; modeT = 0; }
       else { mode = 'join'; joinCode = ''; codeIn.value = ''; netStatus = 'TYPE THE 4-LETTER CODE, THEN ENTER'; leaveOnline(); netStatus = 'TYPE THE 4-LETTER CODE, THEN ENTER'; }
     }
   } else if (mode === 'host') {
@@ -599,6 +700,9 @@ function update() {
         if (CODE_CHARS.includes(ch) && joinCode.length < 4) joinCode += ch;
       }
     }
+  } else if (mode === 'help') {
+    modeT++;
+    if (pressed.Enter || pressed.Escape || pressed.Space) mode = 'title';
   } else if (mode === 'left') {
     modeT++;
     if (pressed.Enter || pressed.Escape) mode = 'title';
@@ -619,6 +723,7 @@ function update() {
     }
     // the friend's game runs on the host; we only send our keys
     const loc = readLocal(KEYMAPS);
+    if (mode === 'fight') predictOwn(loc);
     const h = toBits(loc.held), p = toBits(loc.pr);
     if (conn && (h !== lastSent || p || frame % 30 === 0)) { try { conn.send({ t: 'i', h, p }); } catch (e) {} lastSent = h; }
     if (pressed.Escape) { leaveOnline(); mode = 'title'; }
@@ -627,7 +732,8 @@ function update() {
     if (net === 'host') {
       raw = [readLocal(KEYMAPS), { held: fromBits(netHeld), pr: fromBits(netPr) }];
       netPr = 0;
-    } else raw = [readLocal([KEYMAPS[0]]), readLocal([KEYMAPS[1]])];
+    } else if (vsCPU) raw = [readLocal(KEYMAPS), cpuInput()];
+    else raw = [readLocal([KEYMAPS[0]]), readLocal([KEYMAPS[1]])];
     if (mode !== 'fight') bufs = [{}, {}];
     raw.forEach((r, i) => { for (const k in r.pr) bufs[i][k] = 10; });
     inputs = raw.map((r, i) => ({ held: r.held, pr: bufs[i] }));
@@ -654,7 +760,7 @@ const FONT = {
   F:'111100110100100',G:'011100101101011',H:'101101111101101',I:'111010010010111',J:'001001001101010',
   K:'101101110101101',L:'100100100100111',M:'101111111101101',N:'110101101101101',O:'010101101101010',
   P:'110101110100100',Q:'010101101110011',R:'110101110101101',S:'011100010001110',T:'111010010010010',
-  U:'101101101101111',V:'101101101101010',W:'101101111111101',X:'101101010101101',Y:'101101010010010',
+  U:'101101101101111',V:'101101101010010',W:'101101111111101',X:'101101010101101',Y:'101101010010010',
   Z:'111001010100111','0':'111101101101111','1':'010110010010111','2':'110001010100111','3':'110001010001110',
   '4':'101101111001001','5':'111100110001110','6':'011100111101111','7':'111001010010010','8':'111101111101111',
   '9':'111101111001110','!':'010010010000010',':':'000010000010000','/':'001001010100100','-':'000000111000000',
@@ -662,21 +768,28 @@ const FONT = {
   ',':'000000000010100','<':'001010100010001','>':'100010001010100','^':'010101000000000','v':'000000101010000',
   '_':'000000000000111','(':'010100100100010',')':'010001001001010',"'":'010010000000000'
 };
+const textCache = new Map();
 function text(str, x, y, s, col, align) {
-  str = String(str);
-  str = str.replace(/[a-uw-z]/g, ch => ch.toUpperCase());
-  const w = str.length * 4 * s - s;
-  if (align === 'c') x -= w / 2; else if (align === 'r') x -= w;
-  for (const pass of [0, 1]) {
-    let cx = x;
-    for (const ch of str) {
-      const g = FONT[ch] || FONT[' '];
-      ctx.fillStyle = pass ? col : '#000';
-      for (let i = 0; i < 15; i++) if (g[i] === '1')
-        ctx.fillRect(Math.round(cx + (i % 3) * s + (pass ? 0 : s)), Math.round(y + ((i / 3) | 0) * s + (pass ? 0 : s)), s, s);
-      cx += 4 * s;
+  str = String(str).replace(/[a-uw-z]/g, ch => ch.toUpperCase());
+  const key = s + col + str;
+  let c = textCache.get(key);
+  if (!c) {
+    const w = str.length * 4 * s - s;
+    c = document.createElement('canvas'); c.width = w + s; c.height = 6 * s; c.tw = w;
+    const g = c.getContext('2d');
+    for (const pass of [0, 1]) {
+      let cx = 0; g.fillStyle = pass ? col : '#000';
+      for (const ch of str) {
+        const gl = FONT[ch] || FONT[' '];
+        for (let i = 0; i < 15; i++) if (gl[i] === '1') g.fillRect(cx + (i % 3) * s + (pass ? 0 : s), ((i / 3) | 0) * s + (pass ? 0 : s), s, s);
+        cx += 4 * s;
+      }
     }
+    if (textCache.size > 500) textCache.clear();
+    textCache.set(key, c);
   }
+  if (align === 'c') x -= c.tw / 2; else if (align === 'r') x -= c.tw;
+  ctx.drawImage(c, Math.round(x), Math.round(y));
 }
 
 // ================= Stages: places in Lebanon =================
@@ -1160,7 +1273,7 @@ function drawHUD() {
     const col = f.hp > 50 ? '#3fd16b' : f.hp > 25 ? '#f2c23a' : '#e84a3a';
     R(left ? bx + bw - hw : bx, by, hw, 8, col);
     R(left ? bx + bw - hw : bx, by, hw, 2, 'rgba(255,255,255,0.35)');
-    text(f.c.name, left ? bx : bx + bw, by + 13, 1, left ? '#9be59b' : '#ffb36b', left ? undefined : 'r');
+    text(f.c.name + (vsCPU && !left ? ' (CPU)' : ''), left ? bx : bx + bw, by + 13, 1, left ? '#9be59b' : '#ffb36b', left ? undefined : 'r');
     for (let w = 0; w < 2; w++) {
       const cx = left ? bx + bw - 6 - w * 9 : bx + w * 9;
       R(cx, by + 12, 6, 6, '#000'); R(cx + 1, by + 13, 4, 4, f.wins > w ? '#ffd23f' : '#333');
@@ -1183,6 +1296,9 @@ function drawHUD() {
   if (net) {
     text('YOU: A/D OR ARROWS = MOVE   W/^ = JUMP   S/v = BLOCK', W / 2, H - 14, 1, '#fff', 'c');
     text('F/K = PUNCH   G/L = KICK   H/J = SPECIAL   ESC = QUIT', W / 2, H - 7, 1, '#ffd23f', 'c');
+  } else if (vsCPU) {
+    text('A D MOVE   W JUMP   S BLOCK   F PUNCH   G KICK   H SPECIAL', W / 2, H - 14, 1, '#fff', 'c');
+    text('S + F = UPPERCUT   S + G = SWEEP   ESC = QUIT', W / 2, H - 7, 1, '#ffd23f', 'c');
   } else {
     text('P1: A D MOVE  W JUMP  S BLOCK  F PUNCH  G KICK  H SPECIAL', 4, H - 14, 1, '#9be59b');
     text('P2: < > MOVE  ^ JUMP  v BLOCK  K PUNCH  L KICK  J SPECIAL', 4, H - 7, 1, '#ffb36b');
@@ -1202,22 +1318,49 @@ function drawTitle() {
   ctx.save(); ctx.translate(0, 130 - GROUND); drawFighter(a); drawFighter(b); ctx.restore();
   text('ZAATAR', 70, 136, 1, '#9be59b', 'c'); text('KNEFE', W - 70, 136, 1, '#ffb36b', 'c');
 
-  const items = ['PLAY ON SAME KEYBOARD', 'HOST ONLINE GAME', 'JOIN ONLINE GAME'];
-  drawPanel(122, 60, 140, 58);
+  const items = sub ? ['EASY', 'MEDIUM', 'HARD', 'BACK'] : ['PLAY VS COMPUTER', '2 PLAYERS, ONE KEYBOARD', 'HOST ONLINE GAME', 'JOIN ONLINE GAME', 'HOW TO PLAY'];
+  drawPanel(122, 50, 140, items.length * 13 + 8);
   items.forEach((s, i) => {
-    const y = 68 + i * 16, on = i === menu;
+    const y = 56 + i * 13, on = i === menu;
     if (on) { R(126, y - 3, 132, 11, '#ffd23f33'); text('>', 130 + (Math.floor(modeT / 10) % 2), y, 1, '#ffd23f'); }
     text(s, W / 2 + 4, y, 1, on ? '#ffd23f' : '#ccc', 'c');
   });
-  text(isTouch ? 'TAP TO CHOOSE' : 'UP / DOWN TO CHOOSE, ENTER TO START', W / 2, 124, 1, '#aaa', 'c');
+  text(sub ? 'CHOOSE HOW HARD THE COMPUTER IS' : isTouch ? 'TAP TO CHOOSE' : 'UP / DOWN TO CHOOSE, ENTER TO START', W / 2, 130, 1, '#aaa', 'c');
 
-  drawPanel(16, 146, 170, 50); drawPanel(198, 146, 170, 50);
-  text('PLAYER 1', 101, 150, 1, '#9be59b', 'c');
-  ['A / D  MOVE     W  JUMP', 'S      BLOCK    F  PUNCH', 'G      KICK     H  SPECIAL'].forEach((s, i) => text(s, 26, 160 + i * 9, 1, '#fff'));
-  text('PLAYER 2', 283, 150, 1, '#ffb36b', 'c');
-  ['< / >  MOVE     ^  JUMP', 'v      BLOCK    K  PUNCH', 'L      KICK     J  SPECIAL'].forEach((s, i) => text(s, 208, 160 + i * 9, 1, '#fff'));
-  text('COMBOS: BLOCK+PUNCH = UPPERCUT   BLOCK+KICK = SWEEP   KICK IN AIR', W / 2, 200, 1, '#ffd23f', 'c');
-  text('HIT, THEN HIT AGAIN FAST TO CHAIN COMBOS   -   BEST OF 3 ROUNDS', W / 2, 208, 1, '#aaa', 'c');
+  if (isTouch) {
+    drawPanel(16, 146, 352, 50);
+    text('LEFT THUMB: THE WHEEL = WALK, JUMP, BLOCK', 26, 154, 1, '#9be59b');
+    text('RIGHT THUMB: PUNCH, KICK, SPECIAL, BLOCK', 26, 166, 1, '#ffb36b');
+    text('WANT COMBOS? TAP HOW TO PLAY', 26, 180, 1, '#ffd23f');
+  } else {
+    drawPanel(16, 146, 170, 50); drawPanel(198, 146, 170, 50);
+    text('PLAYER 1', 101, 150, 1, '#9be59b', 'c');
+    ['A / D  MOVE     W  JUMP', 'S      BLOCK    F  PUNCH', 'G      KICK     H  SPECIAL'].forEach((s, i) => text(s, 26, 160 + i * 9, 1, '#fff'));
+    text('PLAYER 2', 283, 150, 1, '#ffb36b', 'c');
+    ['< / >  MOVE     ^  JUMP', 'v      BLOCK    K  PUNCH', 'L      KICK     J  SPECIAL'].forEach((s, i) => text(s, 208, 160 + i * 9, 1, '#fff'));
+  }
+  text('COMBOS: SEE HOW TO PLAY   -   BEST OF 3 ROUNDS', W / 2, 204, 1, '#aaa', 'c');
+}
+
+function drawHelp() {
+  drawBackground(0); R(0, 0, W, H, 'rgba(10,6,20,0.72)');
+  text('HOW TO PLAY', W / 2, 10, 3, '#ffd23f', 'c');
+  const t = isTouch;
+  const rows = [
+    ['MOVE', t ? 'PUSH THE WHEEL LEFT OR RIGHT' : 'A / D   (OR THE ARROW KEYS)'],
+    ['JUMP', t ? 'PUSH THE WHEEL UP' : 'W   (OR UP ARROW)'],
+    ['BLOCK', t ? 'PULL THE WHEEL DOWN, OR HOLD BLOCK' : 'HOLD S   (OR DOWN ARROW)'],
+    ['PUNCH / KICK', t ? 'TAP PUNCH OR KICK' : 'F AND G   (OR K AND L)'],
+    ['COMBO', 'HIT, THEN TAP PUNCH OR KICK AGAIN FAST'],
+    ['UPPERCUT', t ? 'WHEEL DOWN + TAP PUNCH. THROWS THEM UP' : 'HOLD BLOCK + PUNCH. THROWS THEM UP'],
+    ['SWEEP', t ? 'WHEEL DOWN + TAP KICK. KNOCKS THEM DOWN' : 'HOLD BLOCK + KICK. KNOCKS THEM DOWN'],
+    ['FLYING KICK', 'JUMP, THEN TAP KICK IN THE AIR'],
+    ['SPECIAL', (t ? 'TAP SPECIAL' : 'H  (OR J)') + ' WHEN THE BAR IS FULL']
+  ];
+  drawPanel(20, 36, 344, rows.length * 14 + 10);
+  rows.forEach(([a, b], i) => { text(a, 30, 43 + i * 14, 1, '#ffd23f'); text(b, 112, 43 + i * 14, 1, '#fff'); });
+  if (t) text('USE ONE THUMB FOR THE WHEEL, THE OTHER FOR HITS', W / 2, 176, 1, '#9be59b', 'c');
+  text(t ? 'TAP TO GO BACK' : 'PRESS ENTER TO GO BACK', W / 2, 196, 1, '#aaa', 'c');
 }
 
 function drawHostJoin() {
@@ -1243,8 +1386,13 @@ function drawHostJoin() {
   text(isTouch ? 'MENU BUTTON = BACK' : 'ESC = BACK', W / 2, 172, 1, '#aaa', 'c');
 }
 
+let uiClass = '';
 function draw() {
+  const g = mode === 'intro' || mode === 'fight' || mode === 'roundEnd' || mode === 'matchEnd';
+  const cls = (g ? 'play ' : '') + (g || mode === 'host' || mode === 'join' ? 'back' : '');
+  if (cls !== uiClass) { uiClass = cls; document.body.classList.toggle('play', g); document.body.classList.toggle('back', cls.includes('back')); }
   if (mode === 'title') { drawTitle(); return; }
+  if (mode === 'help') { drawHelp(); return; }
   updateCodeBox();
   if (mode === 'host' || mode === 'join') { drawHostJoin(); return; }
   if (mode === 'left') {
@@ -1273,7 +1421,11 @@ function draw() {
   }
 
   if (mode === 'intro') {
-    if (modeT < 75) { text('ROUND ' + round, W / 2, 70, 4, '#fff', 'c'); text(STAGES[stage].name, W / 2, 98, 2, '#ffd23f', 'c'); }
+    if (modeT < 75) {
+      text('ROUND ' + round, W / 2, 70, 4, '#fff', 'c'); text(STAGES[stage].name, W / 2, 98, 2, '#ffd23f', 'c');
+      const tips = ['HIT, THEN HIT AGAIN FAST FOR A COMBO', isTouch ? 'WHEEL DOWN + PUNCH = UPPERCUT' : 'BLOCK + PUNCH = UPPERCUT', isTouch ? 'WHEEL DOWN + KICK = SWEEP' : 'BLOCK + KICK = SWEEP', 'JUMP + KICK = FLYING KICK', 'SPECIAL WORKS WHEN THE BAR IS FULL'];
+      text('TIP: ' + tips[(round + stage) % tips.length], W / 2, 122, 1, '#fff', 'c');
+    }
     else text('FIGHT!', W / 2, 76, 5, '#ff5a3a', 'c');
   } else if (mode === 'roundEnd') {
     if (modeT < 60) text(banner === 'DRAW' ? 'TIME!' : 'K.O.', W / 2, 70, 6, '#ff5a3a', 'c');
