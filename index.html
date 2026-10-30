@@ -35,7 +35,7 @@
     padding: 8px; border: 3px solid #ffd23f; border-radius: 8px; background: #140b18; color: #fff; }
   #codeGo { font: bold 18px monospace; padding: 12px 16px; border: 0; border-radius: 8px; background: #ffd23f; color: #140b18; }
 </style>
-<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
 </head>
 <body>
 <canvas id="c" width="384" height="216"></canvas>
@@ -394,54 +394,118 @@ function simulate() {
   }
 }
 
-// ================= Online play (PeerJS, free, peer-to-peer) =================
+// ================= Online play (free public relay servers, works on phone networks) =================
 const CODE_CHARS = 'ACDEFHJKLPRTUXY34679';
 const randomCode = () => Array.from({ length: 4 }, () => CODE_CHARS[Math.random() * CODE_CHARS.length | 0]).join('');
-const peerId = code => 'cedarclash-v1-' + code.toLowerCase();
+const BROKERS = window.CC_BROKERS || [
+  'wss://broker.emqx.io:8084/mqtt',
+  'wss://broker.hivemq.com:8884/mqtt',
+  'wss://test.mosquitto.org:8081/mqtt'
+];
+const TOPIC = (code, dir) => 'cedarclash/v2/' + code + '/' + dir;   // 'h' = to host, 'g' = to guest
+let clients = [], netGen = 0, lastHeard = 0, snapSeq = 0, lastSeq = 0;
 
-function hasPeer() { return typeof window.Peer === 'function'; }
+function mqttOk() { return typeof window.mqtt === 'object' && typeof window.mqtt.connect === 'function'; }
+
+function openClient(url, gen, onConnect, onMsg, onFail) {
+  let c;
+  try {
+    c = mqtt.connect(url, { clientId: 'cc' + Math.random().toString(36).slice(2, 10), clean: true,
+      connectTimeout: 7000, reconnectPeriod: 0, keepalive: 30, protocolVersion: 4 });
+  } catch (e) { return null; }
+  let failed = false;
+  const fail = () => { if (failed || gen !== netGen) return; failed = true; onFail(c); };
+  c.on('connect', () => { if (gen === netGen) onConnect(c); });
+  c.on('message', (t, buf) => {
+    if (gen !== netGen) return;
+    let d; try { d = JSON.parse(buf.toString()); } catch (e) { return; }
+    onMsg(c, d);
+  });
+  c.on('error', fail); c.on('close', fail); c.on('offline', fail);
+  clients.push(c);
+  return c;
+}
+function endClient(c, graceful) { try { c.end(!graceful); } catch (e) {} clients = clients.filter(x => x !== c); }
+function makeConn(c, topic) {
+  return { client: c, send(o) { try { c.publish(topic, JSON.stringify(o), { qos: 0 }); } catch (e) {} } };
+}
 
 function leaveOnline() {
-  try { if (conn) conn.close(); } catch (e) {}
-  try { if (peer) peer.destroy(); } catch (e) {}
-  peer = conn = null; net = null; netStatus = '';
+  netGen++;
+  if (conn) conn.send({ t: 'bye' });
+  const bound = conn && conn.client;
+  for (const c of clients.slice()) endClient(c, c === bound);
+  clients = []; peer = conn = null; net = null; netStatus = '';
 }
 
 function hostGame() {
   leaveOnline();
   mode = 'host'; modeT = 0;
-  if (!hasPeer()) { netStatus = 'NO INTERNET - CHECK CONNECTION'; return; }
-  roomCode = randomCode(); netStatus = 'CONNECTING...';
-  peer = new Peer(peerId(roomCode));
-  peer.on('open', () => { netStatus = 'WAITING FOR YOUR FRIEND...'; });
-  peer.on('connection', c => {
-    if (conn) { c.close(); return; }
-    conn = c;
-    c.on('open', () => { net = 'host'; netHeld = netPr = 0; outbox = []; startMatch(); });
-    c.on('data', onData);
-    c.on('close', friendLeft);
-  });
-  peer.on('error', e => {
-    if (e.type === 'unavailable-id') { hostGame(); return; }
-    netStatus = 'ERROR: ' + String(e.type || 'NETWORK').toUpperCase().replace(/[^A-Z0-9 ]/g, ' ');
-  });
+  if (!mqttOk()) { netStatus = 'NO INTERNET - CHECK CONNECTION'; return; }
+  roomCode = randomCode(); peer = true; netStatus = 'CONNECTING...';
+  const gen = netGen, code = roomCode;
+  let down = 0;
+  for (const url of BROKERS) {
+    openClient(url, gen,
+      c => { c.subscribe(TOPIC(code, 'h')); if (!conn) netStatus = 'WAITING FOR YOUR FRIEND...'; },
+      (c, d) => {
+        if (d.t === 'hello' && !conn) {
+          conn = makeConn(c, TOPIC(code, 'g'));
+          for (const x of clients.slice()) if (x !== c) endClient(x);
+          conn.send({ t: 'welcome' });
+          net = 'host'; netHeld = netPr = 0; outbox = []; lastHeard = performance.now();
+          startMatch();
+        } else if (conn && conn.client === c) {
+          if (d.t === 'hello') conn.send({ t: 'welcome' }); else onData(d);
+        }
+      },
+      c => {
+        if (conn && conn.client === c) friendLeft();
+        else if (!conn && ++down >= BROKERS.length) netStatus = 'CANNOT REACH THE SERVER - CHECK INTERNET';
+      });
+  }
 }
 
 function joinGame(code) {
   leaveOnline();
   mode = 'join';
-  if (!hasPeer()) { netStatus = 'NO INTERNET - CHECK CONNECTION'; return; }
-  netStatus = 'CONNECTING...';
-  peer = new Peer();
-  peer.on('open', () => {
-    conn = peer.connect(peerId(code), { reliable: true });
-    conn.on('open', () => { net = 'guest'; netStatus = 'CONNECTED! STARTING...'; });
-    conn.on('data', onData);
-    conn.on('close', friendLeft);
-  });
-  peer.on('error', e => {
-    netStatus = e.type === 'peer-unavailable' ? 'ROOM NOT FOUND - CHECK THE CODE' : 'ERROR: ' + String(e.type || 'NETWORK').toUpperCase().replace(/[^A-Z0-9 ]/g, ' ');
-  });
+  if (!mqttOk()) { netStatus = 'NO INTERNET - CHECK CONNECTION'; return; }
+  peer = true; netStatus = 'CONNECTING...';
+  const gen = netGen;
+  let i = 0;
+  function tryNext() {
+    if (gen !== netGen) return;
+    if (i >= BROKERS.length) { netStatus = 'ROOM NOT FOUND - CHECK THE CODE'; peer = null; return; }
+    const url = BROKERS[i++];
+    let done = false, hello = null, timer = null, cl = null;
+    const giveUp = () => {
+      if (done || gen !== netGen) return;
+      done = true; clearInterval(hello); clearTimeout(timer);
+      if (cl) endClient(cl);
+      tryNext();
+    };
+    cl = openClient(url, gen,
+      c => {
+        netStatus = 'LOOKING FOR ROOM ' + code + '...';
+        clearTimeout(timer); timer = setTimeout(giveUp, 6000);
+        c.subscribe(TOPIC(code, 'g'), () => {
+          const say = () => { try { c.publish(TOPIC(code, 'h'), JSON.stringify({ t: 'hello' })); } catch (e) {} };
+          say(); hello = setInterval(say, 1000);
+        });
+      },
+      (c, d) => {
+        if (d.t === 'welcome' && !conn) {
+          done = true; clearInterval(hello); clearTimeout(timer);
+          conn = makeConn(c, TOPIC(code, 'h'));
+          net = 'guest'; netStatus = 'CONNECTED! STARTING...'; lastHeard = performance.now(); lastSeq = 0;
+          for (const x of clients.slice()) if (x !== c) endClient(x);
+        } else if (conn && conn.client === c) onData(d);
+      },
+      c => { if (conn && conn.client === c) friendLeft(); else giveUp(); });
+    if (!cl) { tryNext(); return; }
+    timer = setTimeout(giveUp, 9000);
+  }
+  tryNext();
 }
 
 function friendLeft() {
@@ -451,7 +515,7 @@ function friendLeft() {
 
 const r2 = v => Math.round(v * 100) / 100;
 function snapshot() {
-  return { t: 's', m: mode, mt: modeT, r: round, tm: timer, b: banner, sh: shake, w: P.winner,
+  return { t: 's', q: ++snapSeq, m: mode, mt: modeT, r: round, tm: timer, b: banner, sh: shake, w: P.winner,
     P: P.map(f => [r2(f.x), r2(f.y), f.face, f.hp, f.wins, f.state, f.t, f.atk, f.stun, f.walkT, f.cool, f.combo, f.comboT, f.flash]),
     pj: projs.map(p => [r2(p.x), r2(p.y), p.vx, p.o, p.t]), fx: outbox.splice(0) };
 }
@@ -466,14 +530,17 @@ function applySnapshot(s) {
 }
 function onData(d) {
   if (!d || typeof d !== 'object') return;
+  lastHeard = performance.now();
+  if (d.t === 'bye') { friendLeft(); return; }
   if (net === 'host' && d.t === 'i') { netHeld = d.h | 0; netPr |= d.p | 0; }
-  if (net === 'guest' && d.t === 's') applySnapshot(d);
+  if (net === 'guest' && d.t === 's' && d.q > lastSeq) { lastSeq = d.q; applySnapshot(d); }
 }
 
 // ================= Main update =================
 function update() {
   frame++;
   const keysTyped = typed; typed = [];
+  if (net && conn && performance.now() - lastHeard > 7000) friendLeft();
 
   if (mode === 'title') {
     modeT++;
@@ -510,7 +577,7 @@ function update() {
     // the friend's game runs on the host; we only send our keys
     const loc = readLocal(KEYMAPS);
     const h = toBits(loc.held), p = toBits(loc.pr);
-    if (conn && (h !== lastSent || p)) { try { conn.send({ t: 'i', h, p }); } catch (e) {} lastSent = h; }
+    if (conn && (h !== lastSent || p || frame % 30 === 0)) { try { conn.send({ t: 'i', h, p }); } catch (e) {} lastSent = h; }
     if (pressed.Escape) { leaveOnline(); mode = 'title'; }
   } else {
     if (net === 'host') {
@@ -520,7 +587,7 @@ function update() {
     if (pressed.Escape) { leaveOnline(); mode = 'title'; }
     else {
       simulate();
-      if (net === 'host' && conn) { try { conn.send(snapshot()); } catch (e) {} }
+      if (net === 'host' && conn && (frame % 2 === 0 || outbox.length)) conn.send(snapshot());
     }
   }
 
@@ -862,7 +929,7 @@ function drawHostJoin() {
     text('JOIN ONLINE GAME', W / 2, 64, 1, '#ffd23f', 'c');
     text("TYPE YOUR FRIEND'S CODE:", W / 2, 80, 1, '#fff', 'c');
     const shown = (joinCode + '____').slice(0, 4);
-    if (isTouch && net !== 'guest' && !peer) netStatus = 'TYPE THE CODE IN THE BOX, THEN JOIN';
+    if (isTouch && net !== 'guest' && !peer && netStatus.startsWith('TYPE')) netStatus = 'TYPE THE CODE IN THE BOX, THEN JOIN';
     text(shown, W / 2, 94, 5, '#ffffff', 'c');
     text(netStatus, W / 2, 130, 1, '#9be59b', 'c');
     text('YOU ARE KNEFE (ORANGE)', W / 2, 142, 1, '#ccc', 'c');
